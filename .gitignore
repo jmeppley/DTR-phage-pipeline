@@ -1,6 +1,8 @@
 data
 analysis
 .snakemake
+.*.sw[op]
 rules/._*
 scripts/._*
 envs/._*
+envs/.*.ready

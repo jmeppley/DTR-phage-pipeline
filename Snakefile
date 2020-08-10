@@ -101,8 +101,9 @@ BIN_DIR                     = BINS_ROOT / '{bin_id}'
 BIN_READLIST                = BIN_DIR / 'read_list.txt'
 BIN_FASTA                   = BIN_DIR / '{bin_id}.reads.fa'
 BIN_GENOME_SIZE             = BIN_DIR / 'genome_size.txt'
-SKIP_BINS                   = config['SKIP_BINS'][SAMPLE][STYPE][VERSION]
 BINNED_ANALYSIS_ROOT        = KMER_BIN_ROOT / "refine_bins"
+SKIP_BINS                   = config['SKIP_BINS'][SAMPLE][STYPE][VERSION]
+SKIP_BINS= set(str(b) for b in SKIP_BINS)
 
 #####################################
 # Alignment clustering  FILES       #
@@ -195,18 +196,24 @@ wildcard_constraints:
 
 ##### load rules #####
 
-include: 'rules/summary.smk'
-include: 'rules/dtr_reads.smk'
-include: 'rules/virsorter.smk'
-include: 'rules/kaiju.smk'
-include: 'rules/kmer_bins.smk'
-include: 'rules/align_clusters.smk'
-include: 'rules/polish.smk'
-include: 'rules/annotate.smk'
-include: 'rules/qc_genomes.smk'
-include: 'rules/dedup.smk'
-include: 'rules/dtr_align.smk'
-include: 'rules/linear_concats.smk'
+if "condaprep" in config:
+    include: 'rules/conda.smk'
+    rule condaprep:
+        input: rules.conda.output
+
+else:
+    include: 'rules/summary.smk'
+    include: 'rules/dtr_reads.smk'
+    include: 'rules/virsorter.smk'
+    include: 'rules/kaiju.smk'
+    include: 'rules/kmer_bins.smk'
+    include: 'rules/align_clusters.smk'
+    include: 'rules/polish.smk'
+    include: 'rules/annotate.smk'
+    include: 'rules/qc_genomes.smk'
+    include: 'rules/dedup.smk'
+    include: 'rules/dtr_align.smk'
+    include: 'rules/linear_concats.smk'
 
 #############################################
 # Required steps for assembly-free analysis #
@@ -302,4 +309,5 @@ rule all_linear_concatemer_reads:
     input:
         CONCATEMER_READ_COPY_REPEATS_CONTOURS,
         CONCATEMER_READ_FASTA,
+
 

@@ -180,7 +180,7 @@ def expand_template_from_bins(wildcards, template):
     # get bins from files
     bins, = glob_wildcards(BIN_READLIST)
     # skips from config
-    bins = [b for b in bins if b not in SKIP_BINS]
+    bins = [b for b in bins if str(b) not in SKIP_BINS]
     # expand template
     return expand(str(template), bin_id=bins)
 
