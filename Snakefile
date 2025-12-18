@@ -26,18 +26,6 @@ VERSION      = config['version']
 RACON_ROUNDS = config['RACON']['repeat']
 
 
-###################################
-# READ IMPORT FILES               #
-###################################
-READS_IMPORT_FASTA      = config['input_fasta']
-READS_IMPORT_SUMMARY    = config['input_summary']
-
-
-###################################
-# SUMMARY STATS FILES             #
-###################################
-READS_DIR      = OUTPUT_ROOT / SAMPLE / STYPE / VERSION / 'reads_summary'
-SUMMARY_PLOT   = READS_DIR / 'reads.summary.stats.png'
 
 
 ###################################
@@ -50,30 +38,7 @@ DTR_READS_FASTA              = '{}.dtr.fasta'.format(str(DTR_READS_PREFIX))
 DTR_READS_STATS              = '{}.dtr.stats.tsv'.format(str(DTR_READS_PREFIX))
 DTR_READS_HIST               = '{}.dtr.hist.png'.format(str(DTR_READS_PREFIX))
 
-###################################
-# VIRSORTER FILES                 #
-###################################
-VIRSORTER_DIR            = OUTPUT_ROOT / SAMPLE / STYPE / VERSION / 'virsorter'
-VIRSORTER_FASTA          = VIRSORTER_DIR / 'all_phage.fasta'
-
-pre_filter = config.get('pre_filter', 'DTR').upper()
-FILTERED_FASTA = VIRSORTER_FASTA if pre_filter == "VIRSORTER" \
-                                 else DTR_READS_FASTA if pre_filter == "DTR" \
-                                 else READS_IMPORT_FASTA
-
-
-###################################
-# KAIJU CLASSIFICATION            #
-###################################
-KAIJU_DIR                 = OUTPUT_ROOT /  SAMPLE / STYPE / VERSION / 'kaiju'
-KAIJU_RESULTS             = KAIJU_DIR / 'results.tsv'
-KAIJU_RESULTS_TAXA        = KAIJU_DIR / 'results.taxa.tsv'
-KAIJU_RESULTS_KRONA       = KAIJU_DIR / 'results.krona'
-KAIJU_RESULTS_KRONA_HTML  = KAIJU_DIR / 'results.html'
-KAIJU_TAXIDS              = KAIJU_DIR / 'taxids.csv'
-KAIJU_TAXINFO             = KAIJU_DIR / 'taxinfo.csv'
-KAIJU_TAX_GENOMESIZE_EST  = KAIJU_DIR / 'taxid_genomesize_estimates.csv'
-
+FILTERED_FASTA = DTR_READS_FASTA
 
 ###################################
 # K-mer UAMP files and plots      #
@@ -179,34 +144,18 @@ ALL_POL_STATS_UNIQ               = '{}.stats.unique.tsv'.format(ALL_POL_PREFIX)
 ALL_POL_CDS_PLOT_UNIQ_ALL        = '{}.unique.cds.all.png'.format(ALL_POL_PREFIX)
 ALL_POL_CDS_PLOT_UNIQ_DTR_NPOL10 = '{}.unique.cds.dtr_npol10.png'.format(ALL_POL_PREFIX)
 
-#######################################
-# ANALYSIS OF LINEAR CONCATEMER READS #
-#######################################
-CONCATEMER_DIR                                  = OUTPUT_ROOT / SAMPLE / STYPE / VERSION / 'concatemers'
-CONCATEMER_ALIGN_TMP_DIR                        = CONCATEMER_DIR / 'aln_tmp'
-CONCATEMER_READ_INFO                            = str(CONCATEMER_DIR / 'concats.tsv')
-CONCATEMER_READ_FASTA                           = str(CONCATEMER_DIR / 'concats.fasta')
-CONCATEMER_READ_COPY_REPEATS_CONTOURS           = str(CONCATEMER_DIR / 'concats.contours.png')
-
-
 wildcard_constraints:
     rank = '\d+',
 
 
 ##### load rules #####
 
-include: 'rules/summary.smk'
-include: 'rules/dtr_reads.smk'
-include: 'rules/virsorter.smk'
-include: 'rules/kaiju.smk'
-include: 'rules/kmer_bins.smk'
 include: 'rules/align_clusters.smk'
 include: 'rules/polish.smk'
-include: 'rules/annotate.smk'
 include: 'rules/qc_genomes.smk'
+include: 'rules/annotate.smk'
 include: 'rules/dedup.smk'
 include: 'rules/dtr_align.smk'
-include: 'rules/linear_concats.smk'
 
 #############################################
 # Required steps for assembly-free analysis #
@@ -219,6 +168,8 @@ include: 'rules/linear_concats.smk'
 # 5. all_polish_and_annotate
 # 6. all_combine_dedup_summarize
 # 7. all_linear_concatemer_reads
+
+# minimal kmer bins
 
 rule all:
     input:
@@ -249,57 +200,77 @@ rule all:
         ALL_POL_UNIQ,
         ALL_POL_STATS
 
-## The orignal pieces
 
-rule all_kmer_count_and_bin:
+rule call_umap_freq_map_bins:
+    """ Determines the bins """
+    input: KMER_FREQS_UMAP
+    output: KMER_BINS_MEMBERSHIP
+    conda: '../envs/umap.yml'
+    params:
+        min_cluster = config['UMAP']['bin_min_reads'],
+    shell:
+        'python {SCRIPT_DIR}/run_hdbscan.py -o {output} -c {params.min_cluster} {input}'
+
+checkpoint generate_bins_and_stats:
+    """ 
+    collects all bins stats into KMER_BIN_STATS,
+    and, for each bin_id, generates in BINS_ROOT:
+     * BIN_READLIST
+     * BIN_GENOME_SIZE
+    """
+    input: 
+        bin_membership=KMER_BINS_MEMBERSHIP,
+    output: 
+        all_stats=KMER_BIN_STATS,
+        bins_dir=directory(BINS_ROOT)
+    run:
+        df_reads = pd.read_csv(input.bin_membership, sep='\t')
+
+        # aggregate read stats into bin stats
+        df_bins = df_reads.groupby('bin_id').agg(bases=pd.NamedAgg('length', sum),
+                                                 genomesize=pd.NamedAgg('length', np.mean),
+                                                 coverage=pd.NamedAgg('length', len),
+                                                 readlist=pd.NamedAgg('read', set),
+                                                )
+        df_bins['rl_gs_est'] = True
+
+        # write bin stats (without readlist) to stats file
+        df_bins[['bases','genomesize','coverage','rl_gs_est']] \
+               .sort_index() \
+               .to_csv(output.all_stats, sep='\t')
+
+        # write bin specific files
+        for bin_id, row in df_bins.iterrows():
+            #
+            # create bin specific subdir of BINS_ROOT
+            bin_dir = str(BIN_DIR).format(bin_id=bin_id)
+            os.makedirs(bin_dir, exist_ok=True)
+            #
+            # save genome size to file
+            gsize_fn = str(BIN_GENOME_SIZE).format(bin_id=bin_id)
+            with open(gsize_fn, 'w') as fh:
+                fh.write(f'{row["genomesize"]}\n')
+            #
+            # save read list to file
+            rlist_fn = str(BIN_READLIST).format(bin_id=bin_id)
+            with open(rlist_fn, 'w') as fh:
+                fh.write('{}\n'.format('\n'.join(row['readlist'])))
+
+def expand_template_from_bins(wildcards, template):
+    # get dir through checkpoints to throw Exception if checkpoint is pending
+    checkpoint_dir = checkpoints.generate_bins_and_stats.get(**wildcards).output
+    # get bins from files
+    bins, = glob_wildcards(BIN_READLIST)
+    # skips from config
+    bins = [b for b in bins if b not in SKIP_BINS]
+    # expand template
+    return expand(str(template), bin_id=bins)
+
+rule kmer_binned_fasta:
     input:
-        SUMMARY_PLOT,
-        KMER_FREQS_UMAP_QSCORE,
-        KMER_FREQS_UMAP_GC,
-        KMER_FREQS_UMAP_READLENGTH,
-        KMER_FREQS_UMAP_BINS_PLOT,
-
-rule all_kaiju:
-    input:
-        KAIJU_RESULTS_KRONA_HTML,
-        expand(str(KMER_FREQS_UMAP_TAX), database=DATABASE_NAME, rank=TAX_RANK),
-
-rule all_populate_kmer_bins:
-    input:
-        bin_reads=lambda w: expand_template_from_bins(w, BIN_READLIST),
-        bin_fasta=lambda w: expand_teamplte_from_bins(w, BIN_FASTA),
-
-rule all_alignment_clusters:
-    input:
-        stats=KMER_BIN_STATS,
-        heatmaps=lambda w: expand_template_from_bins(w, ALN_CLUST_OUTPUT_HEATMAP),
-        align=lambda w: expand_template_from_bins(w, ALN_CLUST_OUTPUT_INFO),
-
-rule all_polish_and_annotate:
-    input:
-        ALN_CLUST_READS_COMBO,
-        lambda w: expand_template_from_bins(w, BIN_CLUSTER_REF_READ_FASTA),
-        lambda w: expand_template_from_bins(w, BIN_CLUSTER_POL_READS_FASTA),
-        lambda w: expand_template_from_bins(w, DTR_ALIGN_COORD_PLOT),
-        lambda w: expand_template_from_bins(w, \
-                                            BIN_CLUSTER_POLISHED_REF_PRODIGAL_TXT),
-        lambda w: expand_template_from_bins(w, \
-                                            BIN_CLUSTER_POLISHED_REF_PRODIGAL_STATS),
-        lambda w: expand_template_from_bins(w, \
-                                            BIN_CLUSTER_POLISHED_POL_VS_REF_STRANDS),
-        lambda w: expand_template_from_bins(w, \
-                                            BIN_CLUSTER_POLISHED_POL_VS_REF_STRAND_ANNOTS),
-
-rule all_combine_dedup_summarize:
-    input:
-        ALL_POL_CDS_PLOT_UNIQ_ALL,
-        ALL_POL_CDS_PLOT_UNIQ_DTR_NPOL10,
-        ALL_POL,
-        ALL_POL_UNIQ,
-        ALL_POL_STATS
-
-rule all_linear_concatemer_reads:
-    input:
-        CONCATEMER_READ_COPY_REPEATS_CONTOURS,
-        CONCATEMER_READ_FASTA,
-
+        read_list=BIN_READLIST,
+        reads_fasta=FILTERED_FASTA,
+    output: BIN_FASTA
+    conda: '../envs/seqkit.yml'
+    shell:
+        'seqkit grep -f {input.read_list} -o {output} {input.reads_fasta}'

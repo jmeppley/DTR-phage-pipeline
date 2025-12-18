@@ -33,8 +33,9 @@ rule run_medaka:
     threads: config['MEDAKA']['threads']
     conda: '../envs/medaka-0.11.0.yml'
     shell:
+        'rm -rf {params.outdir};'
         'medaka_consensus -i {input.raw_reads} -d {input.draft} '
-        '-o {params.out_dir} -t {threads} -m {params.model}; '
+        '   -o {params.out_dir} -t {threads} -m {params.model}; '
         'mv {params.out_dir}/consensus.fasta {output}'
 
 rule rename_polished_ref_reads:
