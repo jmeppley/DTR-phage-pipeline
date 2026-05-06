@@ -254,7 +254,9 @@ rule all:
         ALL_POL_CDS_PLOT_UNIQ_DTR_NPOL10,
         ALL_POL,
         ALL_POL_UNIQ,
-        ALL_POL_STATS
+        ALL_POL_STATS,
+        CONCATEMER_READ_COPY_REPEATS_CONTOURS,
+        CONCATEMER_READ_FASTA,
 
 ## The orignal pieces
 
